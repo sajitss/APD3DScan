@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Scanner Prototype | APD</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="logo">3D<span>Scan</span></div>
+            <div id="connection-status" class="status-dot"></div>
+        </header>
+
+        <main>
+            <!-- Camera View -->
+            <section id="camera-section">
+                <div class="video-container">
+                    <video id="camera-preview" autoplay playsinline muted></video>
+                    <div id="overlay" class="hidden">
+                        <div class="countdown-container">
+                            <span id="countdown-number"></span>
+                        </div>
+                        <div class="instruction-bubble">
+                            <p id="instruction-text">Move slowly around the leg</p>
+                        </div>
+                    </div>
+                    <div id="capture-indicator" class="hidden"></div>
+                </div>
+                
+                <div class="camera-controls">
+                    <div class="progress-container">
+                        <div class="progress-text">
+                            <span id="photo-count">0</span> / 20 Photos
+                        </div>
+                        <div class="progress-bar">
+                            <div id="progress-fill" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    
+                    <button id="start-btn" class="primary-btn">Start Scan</button>
+                </div>
+            </section>
+
+            <!-- Upload/Processing View -->
+            <section id="status-section" class="hidden">
+                <div class="card">
+                    <h2 id="status-title">Uploading...</h2>
+                    <div class="spinner-container">
+                        <div class="spinner"></div>
+                    </div>
+                    <p id="status-msg">Transmitting images to secure server</p>
+                    <div id="quality-report" class="hidden">
+                        <!-- Quality report details will be injected here -->
+                    </div>
+                </div>
+                <button id="reset-btn" class="secondary-btn hidden">New Scan</button>
+            </section>
+
+            <!-- Preview Gallery -->
+            <section id="gallery-section" class="hidden">
+                <h3>Captured Sequence</h3>
+                <div id="preview-grid" class="grid"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p>&copy; 2026 APD 3D Reconstruction Prototype</p>
+        </footer>
+    </div>
+
+    <!-- Hidden canvas for capture -->
+    <canvas id="capture-canvas" class="hidden"></canvas>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
