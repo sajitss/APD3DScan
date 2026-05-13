@@ -10,19 +10,32 @@ class MarkerDetector:
 
     def detect_markers(self, image_path):
         """
-        Detect QR codes in the image and return corners and IDs.
-        OpenCV QRCodeDetector.detectAndDecodeMulti returns:
-        - retval: bool (True if at least one QR code is detected)
-        - decoded_info: list of strings (decoded text)
-        - points: list of 4x2 arrays (corners)
+        Detect QR codes in the image with preprocessing for robustness.
         """
         img = cv2.imread(image_path)
         if img is None:
             return None, [], []
 
+        # 1. Try on original image
         retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(img)
         
-        # points is (N, 4, 2)
+        # 2. If no markers found, try preprocessing
+        if not retval or points is None:
+            # Convert to grayscale
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(gray)
+            
+            # Try again on enhanced grayscale image
+            retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(enhanced)
+            
+            # 3. If still no markers, try a slightly blurred version to reduce noise
+            if not retval or points is None:
+                blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
+                retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(blurred)
+
         if not retval or points is None:
             return img, [], []
 
