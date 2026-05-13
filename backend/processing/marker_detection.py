@@ -3,63 +3,54 @@ import numpy as np
 import os
 import json
 
+from pyzbar.pyzbar import decode as zbar_decode
+
 class MarkerDetector:
     def __init__(self, marker_size_mm=25.4):
         self.marker_size_mm = marker_size_mm
-        self.qr_detector = cv2.QRCodeDetector()
 
     def detect_markers(self, image_path):
         """
-        Detect QR codes with aggressive retries and curved surface support.
+        Detect QR codes using pyzbar for maximum robustness.
         """
         img = cv2.imread(image_path)
         if img is None:
             return None, [], []
 
-        def try_decode(target_img):
-            # Try multi-detection first
-            ok, info, pts, _ = self.qr_detector.detectAndDecodeMulti(target_img)
-            
-            # If multi fails or returns empty strings, try detectAndDecode (singular)
-            # as it can sometimes be more robust for specific angles
-            if not ok or not any(info):
-                ok_s, info_s, pts_s, _ = self.qr_detector.detectAndDecode(target_img)
-                if ok_s and info_s:
-                    return True, [info_s], [pts_s]
-            
-            # If still failing, try curved detector (OpenCV 4.5.4+)
-            if not ok or not any(info):
-                try:
-                    ok_c, info_c, pts_c, _ = self.qr_detector.detectAndDecodeCurved(target_img)
-                    if ok_c and info_c:
-                        return True, [info_c], [pts_c]
-                except AttributeError:
-                    pass # Method not available in this CV version
-                    
-            return ok, info, pts
-
-        # 1. Try original
-        retval, decoded_info, points = try_decode(img)
+        # pyzbar works best on grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 2. Try Preprocessing if needed (if failed OR if we got points but no text)
-        if not retval or points is None or not any(decoded_info):
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # 1. Try standard decode
+        decoded_objects = zbar_decode(gray)
+        
+        # 2. If no markers, try with CLAHE enhancement
+        if not decoded_objects:
             clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
             enhanced = clahe.apply(gray)
-            
-            retval, decoded_info, points = try_decode(enhanced)
-            
-            if not retval or points is None or not any(decoded_info):
-                # Try sharpening
-                kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-                sharpened = cv2.filter2D(enhanced, -1, kernel)
-                retval, decoded_info, points = try_decode(sharpened)
+            decoded_objects = zbar_decode(enhanced)
 
-        if not retval or points is None:
-            return img, [], []
+        points = []
+        decoded_info = []
 
-        # Filter out empty decodes if we have others, but keep them for ROI if nothing else
-        # For prototype, we prefer ROI even if decode fails
+        for obj in decoded_objects:
+            # obj.polygon is a list of Point(x, y)
+            # Convert to 4x2 numpy array
+            if len(obj.polygon) == 4:
+                pts = np.array([[p.x, p.y] for p in obj.polygon], dtype=np.float32)
+                points.append(pts)
+                decoded_info.append(obj.data.decode('utf-8'))
+            else:
+                # Fallback to rect if polygon is weird
+                rect = obj.rect
+                pts = np.array([
+                    [rect.left, rect.top],
+                    [rect.left + rect.width, rect.top],
+                    [rect.left + rect.width, rect.top + rect.height],
+                    [rect.left, rect.top + rect.height]
+                ], dtype=np.float32)
+                points.append(pts)
+                decoded_info.append(obj.data.decode('utf-8'))
+
         return img, points, decoded_info
 
     def get_pixel_to_mm_scale(self, points):
