@@ -11,46 +11,71 @@ class MarkerDetector:
 
     def detect_markers(self, image_path):
         """
-        Detect QR codes using pyzbar for maximum robustness.
+        Cumulative Detection: Combines results from multiple engines and deduplicates by ID.
         """
         img = cv2.imread(image_path)
         if img is None:
             return None, [], []
 
-        # pyzbar works best on grayscale
+        # Dictionary to store unique markers by their decoded ID
+        unique_markers = {}
+
+        # 1. Grayscale & Contrast
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
         
-        # 1. Try standard decode
-        decoded_objects = zbar_decode(gray)
+        # 2. Sharpening (For blur)
+        kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+        sharpened = cv2.filter2D(enhanced, -1, kernel)
+
+        # 3. Binarization (For extreme shear/shadows)
+        _, binarized = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 4. Downscaling (For sensor noise)
+        small = cv2.resize(enhanced, (0,0), fx=0.5, fy=0.5)
+
+        def collect_zbar(target, scale=1.0):
+            objs = zbar_decode(target)
+            for obj in objs:
+                try:
+                    data = obj.data.decode('utf-8')
+                    if data and data not in unique_markers:
+                        if len(obj.polygon) == 4:
+                            pts = np.array([[p.x/scale, p.y/scale] for p in obj.polygon], dtype=np.float32)
+                        else:
+                            r = obj.rect
+                            pts = np.array([[r.left/scale, r.top/scale], [(r.left+r.width)/scale, r.top/scale], [(r.left+r.width)/scale, (r.top+r.height)/scale], [r.left/scale, (r.top+r.height)/scale]], dtype=np.float32)
+                        unique_markers[data] = pts
+                except: pass
+
+        def collect_opencv(target, scale=1.0):
+            detector = cv2.QRCodeDetector()
+            ok, info, pts, _ = detector.detectAndDecodeMulti(target)
+            if ok and info:
+                for i, data in enumerate(info):
+                    if data and data not in unique_markers:
+                        unique_markers[data] = pts[i] / scale
+            
+            # Curved fallback
+            try:
+                ok_c, info_c, pts_c, _ = detector.detectAndDecodeCurved(target)
+                if ok_c and info_c and info_c not in unique_markers:
+                    unique_markers[info_c] = pts_c / scale
+            except: pass
+
+        # Run all combinations
+        for t, s in [(gray, 1.0), (enhanced, 1.0), (sharpened, 1.0), (binarized, 1.0), (small, 0.5)]:
+            collect_zbar(t, s)
+            collect_opencv(t, s)
+
+        # Convert back to lists
+        decoded_info = list(unique_markers.keys())
+        points = list(unique_markers.values())
+
+        if points:
+            print(f"DEBUG: {os.path.basename(image_path)} - Combined Search found {len(points)} unique markers: {decoded_info}")
         
-        # 2. If no markers, try with CLAHE enhancement
-        if not decoded_objects:
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(gray)
-            decoded_objects = zbar_decode(enhanced)
-
-        points = []
-        decoded_info = []
-
-        for obj in decoded_objects:
-            # obj.polygon is a list of Point(x, y)
-            # Convert to 4x2 numpy array
-            if len(obj.polygon) == 4:
-                pts = np.array([[p.x, p.y] for p in obj.polygon], dtype=np.float32)
-                points.append(pts)
-                decoded_info.append(obj.data.decode('utf-8'))
-            else:
-                # Fallback to rect if polygon is weird
-                rect = obj.rect
-                pts = np.array([
-                    [rect.left, rect.top],
-                    [rect.left + rect.width, rect.top],
-                    [rect.left + rect.width, rect.top + rect.height],
-                    [rect.left, rect.top + rect.height]
-                ], dtype=np.float32)
-                points.append(pts)
-                decoded_info.append(obj.data.decode('utf-8'))
-
         return img, points, decoded_info
 
     def get_pixel_to_mm_scale(self, points):
