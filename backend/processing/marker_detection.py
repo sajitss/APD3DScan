@@ -10,35 +10,56 @@ class MarkerDetector:
 
     def detect_markers(self, image_path):
         """
-        Detect QR codes in the image with preprocessing for robustness.
+        Detect QR codes with aggressive retries and curved surface support.
         """
         img = cv2.imread(image_path)
         if img is None:
             return None, [], []
 
-        # 1. Try on original image
-        retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(img)
-        
-        # 2. If no markers found, try preprocessing
-        if not retval or points is None:
-            # Convert to grayscale
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        def try_decode(target_img):
+            # Try multi-detection first
+            ok, info, pts, _ = self.qr_detector.detectAndDecodeMulti(target_img)
             
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            # If multi fails or returns empty strings, try detectAndDecode (singular)
+            # as it can sometimes be more robust for specific angles
+            if not ok or not any(info):
+                ok_s, info_s, pts_s, _ = self.qr_detector.detectAndDecode(target_img)
+                if ok_s and info_s:
+                    return True, [info_s], [pts_s]
+            
+            # If still failing, try curved detector (OpenCV 4.5.4+)
+            if not ok or not any(info):
+                try:
+                    ok_c, info_c, pts_c, _ = self.qr_detector.detectAndDecodeCurved(target_img)
+                    if ok_c and info_c:
+                        return True, [info_c], [pts_c]
+                except AttributeError:
+                    pass # Method not available in this CV version
+                    
+            return ok, info, pts
+
+        # 1. Try original
+        retval, decoded_info, points = try_decode(img)
+        
+        # 2. Try Preprocessing if needed (if failed OR if we got points but no text)
+        if not retval or points is None or not any(decoded_info):
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
             enhanced = clahe.apply(gray)
             
-            # Try again on enhanced grayscale image
-            retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(enhanced)
+            retval, decoded_info, points = try_decode(enhanced)
             
-            # 3. If still no markers, try a slightly blurred version to reduce noise
-            if not retval or points is None:
-                blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
-                retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(blurred)
+            if not retval or points is None or not any(decoded_info):
+                # Try sharpening
+                kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+                sharpened = cv2.filter2D(enhanced, -1, kernel)
+                retval, decoded_info, points = try_decode(sharpened)
 
         if not retval or points is None:
             return img, [], []
 
+        # Filter out empty decodes if we have others, but keep them for ROI if nothing else
+        # For prototype, we prefer ROI even if decode fails
         return img, points, decoded_info
 
     def get_pixel_to_mm_scale(self, points):
